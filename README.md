@@ -1,4 +1,52 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# CureFact: Health Misinformation Detection App
+
+CureFact is a mobile application built with React Native designed to combat health misinformation. It provides users with tools to fact-check social media content and analyze product labels for a better understanding of their health choices.
+
+## Features
+
+CureFact offers two core features:
+
+1.  **Social Media Fact Check**: Users can share or upload health-related social media videos (like Reels, Shorts, etc.). The app's backend, powered by the Gemini API, analyzes the content, verifies the claims against trusted sources (e.g., WHO, CDC), and provides a verdict (True, Misleading, or False) with clear explanations.
+
+2.  **Product Label Analyzer**: Users can take a picture of a product's nutrition label. The app analyzes the ingredients and nutritional information to provide insights into its health impact, sugar content, and offers consumption recommendations in an easy-to-understand format.
+
+## Tech Stack
+
+-   **Frontend**: React Native
+-   **Backend**: Node.js & Python
+-   **AI/ML**: Google Gemini API
+
+## Getting Started
+
+This is a React Native project. To get it running locally, follow these steps:
+
+1.  **Prerequisites**: Make sure you have Node.js, Watchman, the React Native command line interface, a JDK, and Android Studio and Xcode installed.
+
+2.  **Clone the repository**:
+    ```sh
+    git clone https://github.com/ilan2004/Curefact-app.git
+    cd Curefact-app
+    ```
+
+3.  **Install dependencies**:
+    ```sh
+    npm install
+    ```
+
+4.  **Run the application**:
+
+    -   **For Android**:
+        ```sh
+        npx react-native run-android
+        ```
+    -   **For iOS**:
+        ```sh
+        npx react-native run-ios
+        ```
+
+## Project Goal
+
+The primary goal of CureFact is to provide a seamless and user-friendly experience for users to quickly and accurately assess health-related information they encounter daily. The focus is on a polished UX and smooth interactions, especially for the Android demo.
 
 # Getting Started
 
