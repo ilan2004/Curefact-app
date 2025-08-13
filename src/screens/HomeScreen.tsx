@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Linking } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -14,6 +14,14 @@ export default function HomeScreen({ navigation }: Props) {
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('FactCheck')}>
         <Text style={styles.cardTitle}>📱 Social Media Fact Check</Text>
         <Text style={styles.cardDesc}>Share reels/shorts to verify health claims</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.card, { backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1 }]}
+        onPress={() => Linking.openURL('https://www.instagram.com/reel/DJl7w29JArs/?utm_source=ig_web_copy_link')}
+      >
+        <Text style={styles.cardTitle}>🔗 Try with sample IG Reel</Text>
+        <Text style={styles.cardDesc}>Opens Instagram to copy/share the link</Text>
       </TouchableOpacity>
 
       <TouchableOpacity style={styles.card} onPress={() => navigation.navigate('LabelCheck')}>
