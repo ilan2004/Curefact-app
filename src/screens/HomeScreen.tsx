@@ -17,7 +17,7 @@ export default function HomeScreen({ navigation }: Props) {
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.card, { backgroundColor: '#fff7ed', borderColor: '#fed7aa', borderWidth: 1 }]}
+        style={[styles.card, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE', borderWidth: 1 }]}
         onPress={() => Linking.openURL('https://www.instagram.com/reel/DJl7w29JArs/?utm_source=ig_web_copy_link')}
       >
         <Text style={styles.cardTitle}>🔗 Try with sample IG Reel</Text>
@@ -33,10 +33,19 @@ export default function HomeScreen({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 24, gap: 16, justifyContent: 'center' },
-  title: { fontSize: 28, fontWeight: '800', textAlign: 'center' },
-  subtitle: { fontSize: 16, color: '#666', textAlign: 'center', marginBottom: 12 },
-  card: { padding: 20, backgroundColor: '#f2f5ff', borderRadius: 16 },
-  cardTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6 },
-  cardDesc: { fontSize: 14, color: '#555' },
+  container: { flex: 1, padding: 24, gap: 16, justifyContent: 'center', backgroundColor: '#F5F9FF' },
+  title: { fontSize: 28, fontWeight: '800', textAlign: 'center', color: '#0F172A' },
+  subtitle: { fontSize: 16, color: '#475569', textAlign: 'center', marginBottom: 12 },
+  card: {
+    padding: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  cardTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6, color: '#0F172A' },
+  cardDesc: { fontSize: 14, color: '#64748B' },
 });

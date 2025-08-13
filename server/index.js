@@ -1,4 +1,5 @@
 /* Simple Express server to resolve direct media URL for Instagram Reels using yt-dlp */
+require('dotenv').config();
 const express = require('express');
 const YTDlpWrap = require('yt-dlp-wrap').default;
 const { spawn } = require('child_process');
@@ -13,7 +14,12 @@ const BIN_PATH = path.join(
 
 // Gemini API configuration
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'your_gemini_api_key_here';
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-pro';
+// Use v1 for gemini-2.x models; fallback to v1beta for older models
+const GEMINI_API_VERSION = GEMINI_MODEL.startsWith('gemini-2') ? 'v1' : 'v1beta';
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/${GEMINI_API_VERSION}/models/${GEMINI_MODEL}:generateContent`;
+const GEMINI_FALLBACK_MODEL = process.env.GEMINI_FALLBACK_MODEL || 'gemini-1.5-flash';
+const FILES_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
 
 let ensureBinaryPromise = null;
 async function ensureBinaryPath() {
@@ -80,22 +86,27 @@ async function runYtDlpGetUrl(targetUrl) {
   return { downloadUrl, headers };
 }
 
-async function analyzeVideoWithGemini(videoUrl, originalUrl) {
+async function analyzeVideoWithGemini(videoUrl, originalUrl, cdnHeaders = {}) {
   if (!GOOGLE_API_KEY || GOOGLE_API_KEY === 'your_gemini_api_key_here') {
     throw new Error('Gemini API key not configured');
   }
 
-  const prompt = `Analyze this Instagram reel video for health claims and provide a fact-check assessment.
+  const prompt = `You are analyzing short-form social media video content.
 
-Original URL: ${originalUrl}
-Video URL: ${videoUrl}
+Context:
+- Original URL: ${originalUrl}
+- Direct Media URL: ${videoUrl}
 
-Please provide a comprehensive analysis in the following JSON format:
+Task:
+1) First, understand what the video says and summarize its content clearly (key topics, statements, notable mentions).
+2) If the content contains explicit health-related claims (about treatments, cures, disease prevention, nutrition effects, etc.), perform a concise fact check.
+3) If there are no explicit health claims, return an informative content summary and mark verdict as "Unverified".
 
+Output strictly in this JSON format (no extra text):
 {
-  "mainClaim": "The primary health claim made in the video (1-2 sentences)",
+  "mainClaim": "If a health claim exists, state it concisely. If not, provide a 1-2 sentence content summary.",
   "verdict": "Accurate|Misleading|False|Unverified",
-  "explanation": "Detailed explanation of why this verdict was given (2-4 sentences)",
+  "explanation": "If claim exists, give a brief rationale and context. If not, provide a clear 2-4 sentence content summary of the video.",
   "confidence": 0.85,
   "sources": [
     {
@@ -106,20 +117,102 @@ Please provide a comprehensive analysis in the following JSON format:
   ]
 }
 
-Guidelines:
-- "Accurate": Claim is supported by credible scientific evidence
-- "Misleading": Claim has some truth but is exaggerated or missing context
-- "False": Claim contradicts established scientific evidence
-- "Unverified": Insufficient evidence to determine accuracy
+Notes:
+- Only include sources if you made a health-claim assessment. If no claim, return an empty sources array.
+- Keep the output JSON-valid and minimal. Do not include Markdown or commentary outside the JSON.`;
 
-Focus on health, medical, and wellness claims. Provide 2-4 credible sources (WHO, CDC, NIH, peer-reviewed studies, etc.).`;
+  // Attempt to download and upload the media so Gemini can access it
+  const tmpDir = path.join(__dirname, 'tmp');
+  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir, { recursive: true });
+  const localPath = path.join(tmpDir, `video_${Date.now()}.mp4`);
+
+  let uploadedFileName = null;
+  let uploadedFileUri = null;
+  let usedFileMime = 'video/mp4';
+  try {
+    console.log('Downloading media for Gemini upload:', videoUrl);
+    // Ensure critical headers for Instagram/CDN requests
+    const dlHeaders = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+      'Accept': '*/*',
+      'Referer': 'https://www.instagram.com/',
+      ...cdnHeaders,
+    };
+    const mediaResp = await fetch(videoUrl, { method: 'GET', headers: dlHeaders });
+    if (!mediaResp.ok) throw new Error(`Failed to download media: ${mediaResp.status}`);
+    // In Node.js fetch, body is a Web ReadableStream; use arrayBuffer instead of pipe
+    const arr = await mediaResp.arrayBuffer();
+    fs.writeFileSync(localPath, Buffer.from(arr));
+
+    // Upload to Gemini Files API
+    const stats = fs.statSync(localPath);
+    console.log(`Uploading to Gemini Files API (${(stats.size/1024/1024).toFixed(2)} MB)...`);
+    // Use the upload endpoint with uploadType=media
+    const uploadUrl = `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${GOOGLE_API_KEY}&uploadType=media`;
+    const uploadBody = fs.readFileSync(localPath);
+    let uploadResp;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        uploadResp = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'video/mp4',
+            'x-goog-upload-file-name': path.basename(localPath),
+            'x-goog-upload-protocol': 'raw',
+          },
+          body: uploadBody,
+        });
+        break;
+      } catch (e) {
+        console.warn(`Upload fetch failed (attempt ${attempt}):`, e.message);
+        if (attempt === 2) throw e;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    if (!uploadResp.ok) {
+      const t = await uploadResp.text().catch(() => '');
+      throw new Error(`Gemini upload failed: ${uploadResp.status} ${t}`);
+    }
+    const uploadJson = await uploadResp.json();
+    uploadedFileName = uploadJson.name || (uploadJson.file && uploadJson.file.name) || null;
+    uploadedFileUri = uploadJson.uri || (uploadJson.file && uploadJson.file.uri) || null;
+    if (!uploadedFileName) throw new Error('Upload response missing file name');
+    console.log('Uploaded file name:', uploadedFileName);
+    if (uploadedFileUri) console.log('Uploaded file uri:', uploadedFileUri);
+
+    // Poll until ACTIVE
+    const resourcePath = uploadedFileName.startsWith('files/') ? uploadedFileName : `files/${uploadedFileName}`;
+    const fileGetUrl = `${FILES_API_BASE}/${resourcePath}?key=${GOOGLE_API_KEY}`;
+    const start = Date.now();
+    while (Date.now() - start < 60000) { // up to 60s
+      await new Promise(r => setTimeout(r, 1500));
+      const stResp = await fetch(fileGetUrl);
+      if (!stResp.ok) break;
+      const st = await stResp.json();
+      const state = st.state || (st.file && st.file.state);
+      if (state === 'ACTIVE') {
+        console.log('Gemini file is ACTIVE');
+        break;
+      }
+    }
+  } catch (e) {
+    console.warn('Video upload flow failed, will fall back to URL-only prompt:', e.message);
+  } finally {
+    // Cleanup local temp file
+    try { if (fs.existsSync(localPath)) fs.unlinkSync(localPath); } catch {}
+  }
+
+  // Build request body. Prefer file reference when available using correct schema.
+  const parts = [];
+  if (uploadedFileName) {
+    const fallbackNameUri = uploadedFileName.startsWith('files/') ? uploadedFileName : `files/${uploadedFileName}`;
+    const fileUri = uploadedFileUri || fallbackNameUri;
+    parts.push({ file_data: { file_uri: fileUri, mime_type: usedFileMime } });
+  }
+  parts.push({ text: prompt });
 
   const requestBody = {
-    contents: [{
-      parts: [{
-        text: prompt
-      }]
-    }],
+    contents: [{ role: 'user', parts }],
     generationConfig: {
       temperature: 0.3,
       topK: 40,
@@ -128,16 +221,52 @@ Focus on health, medical, and wellness claims. Provide 2-4 credible sources (WHO
     }
   };
 
-  const response = await fetch(`${GEMINI_API_URL}?key=${GOOGLE_API_KEY}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(requestBody)
-  });
+  // Helper to call a specific model and API version
+  const callModel = async (model) => {
+    const version = model.startsWith('gemini-2') ? 'v1' : 'v1beta';
+    const url = `https://generativelanguage.googleapis.com/${version}/models/${model}:generateContent?key=${GOOGLE_API_KEY}`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+    return { resp, version, model };
+  };
+
+  let response, usedVersion, usedModel;
+  if (uploadedFileName && GEMINI_FALLBACK_MODEL) {
+    // Prefer the v1beta-capable model when sending file_data
+    const fb = await callModel(GEMINI_FALLBACK_MODEL);
+    response = fb.resp;
+    usedVersion = fb.version;
+    usedModel = fb.model;
+    if (!response.ok && response.status >= 400 && response.status < 500) {
+      const fbErr = await response.text().catch(() => '');
+      console.warn(`File-based analyze failed on fallback model (${GEMINI_FALLBACK_MODEL}, api ${fb.version}) -> ${response.status}: ${fbErr}`);
+      const pri = await callModel(GEMINI_MODEL);
+      response = pri.resp;
+      usedVersion = pri.version;
+      usedModel = pri.model;
+    }
+  } else {
+    // Try primary model first (no file)
+    const pri = await callModel(GEMINI_MODEL);
+    response = pri.resp;
+    usedVersion = pri.version;
+    usedModel = pri.model;
+    if (!response.ok && response.status >= 400 && response.status < 500 && GEMINI_FALLBACK_MODEL && GEMINI_FALLBACK_MODEL !== GEMINI_MODEL) {
+      const primaryErr = await response.text().catch(() => '');
+      console.warn(`Primary model failed (${GEMINI_MODEL}, api ${GEMINI_API_VERSION}) -> ${response.status}: ${primaryErr}`);
+      const fb = await callModel(GEMINI_FALLBACK_MODEL);
+      response = fb.resp;
+      usedVersion = fb.version;
+      usedModel = fb.model;
+    }
+  }
 
   if (!response.ok) {
-    const errorText = await response.text();
+    const errorText = await response.text().catch(() => '');
+    console.error('Gemini API non-OK response (after fallback if any):', response.status, errorText);
     throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
   }
 
@@ -147,26 +276,61 @@ Focus on health, medical, and wellness claims. Provide 2-4 credible sources (WHO
     throw new Error('Invalid response from Gemini API');
   }
 
-  const analysisText = data.candidates[0].content.parts[0].text;
+  // Safely extract the model text
+  let analysisText = '';
+  try {
+    const cand = data.candidates && data.candidates[0];
+    const content = cand && cand.content;
+    const parts = content && content.parts;
+    if (Array.isArray(parts)) {
+      const textPart = parts.find(p => typeof p.text === 'string');
+      if (textPart && typeof textPart.text === 'string') {
+        analysisText = textPart.text;
+      }
+    }
+  } catch {}
+  if (!analysisText || typeof analysisText !== 'string') {
+    console.error('Gemini response missing text content. Raw payload:', JSON.stringify(data).slice(0, 2000));
+    throw new Error('Gemini response missing text content');
+  }
+  console.log(`Gemini success using model ${usedModel} (api ${usedVersion})`);
   
   // Try to extract JSON from the response
   try {
-    // Look for JSON in the response
-    const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    } else {
-      throw new Error('No JSON found in response');
-    }
+    // Clean common formatting like Markdown fences
+    const cleaned = analysisText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+
+    // Look for JSON object in the response
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('No JSON found in response');
+
+    const parsed = JSON.parse(jsonMatch[0]);
+    // Attach model info
+    return { ...parsed, modelUsed: usedModel, apiVersionUsed: usedVersion };
   } catch (parseError) {
     console.error('Failed to parse Gemini response as JSON:', analysisText);
-    // Return a structured fallback
+    // Synthesize a useful content summary instead of a hard failure
+    const cleaned = analysisText
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/i, '')
+      .trim();
+    // Take first 2-3 sentences for explanation
+    const sentences = cleaned.split(/(?<=[.!?])\s+/).slice(0, 3).join(' ');
+    const mainClaimOrSummary = cleaned.split(/(?<=[.!?])\s+/).slice(0, 1).join(' ');
+
     return {
-      mainClaim: "Unable to extract specific claim from video",
-      verdict: "Unverified",
-      explanation: "The AI analysis could not determine the specific health claims in this video. Please review manually.",
+      mainClaim: mainClaimOrSummary || 'Video content summary unavailable',
+      verdict: 'Unverified',
+      explanation: sentences || 'The AI provided a content summary but no explicit health claims were identified.',
       confidence: 0.0,
-      sources: []
+      sources: [],
+      modelUsed: usedModel,
+      apiVersionUsed: usedVersion,
     };
   }
 }
@@ -201,8 +365,20 @@ app.post('/api/analyze', async (req, res) => {
       return res.status(400).json({ error: 'videoUrl and originalUrl are required' });
     }
     
-    console.log('Analyzing video with Gemini:', videoUrl);
-    const analysis = await analyzeVideoWithGemini(videoUrl, originalUrl);
+    // Re-resolve URL and headers using yt-dlp to ensure correct CDN headers
+    let resolvedUrl = videoUrl;
+    let resolvedHeaders = {};
+    try {
+      const resolved = await runYtDlpGetUrl(originalUrl);
+      resolvedUrl = resolved.downloadUrl || videoUrl;
+      resolvedHeaders = resolved.headers || {};
+      console.log('Re-resolved for analysis. URL:', resolvedUrl);
+    } catch (e) {
+      console.warn('Re-resolve via yt-dlp failed, using provided videoUrl:', e.message);
+    }
+
+    console.log('Analyzing video with Gemini:', resolvedUrl);
+    const analysis = await analyzeVideoWithGemini(resolvedUrl, originalUrl, resolvedHeaders);
     console.log('Gemini analysis result:', analysis);
     
     return res.json(analysis);
@@ -217,6 +393,5 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
 app.listen(PORT, () => {
   console.log(`Media resolver server listening on http://localhost:${PORT}`);
   console.log(`Gemini API key configured: ${GOOGLE_API_KEY ? 'Yes' : 'No'}`);
+  console.log(`Gemini model: ${GEMINI_MODEL} (api ${GEMINI_API_VERSION})`);
 });
-
-

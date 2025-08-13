@@ -11,7 +11,7 @@ export default function LabelCheckFlow() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
-  title: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
-  desc: { fontSize: 14, color: '#666', textAlign: 'center' },
+  container: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, backgroundColor: '#F5F9FF' },
+  title: { fontSize: 22, fontWeight: '800', marginBottom: 8, color: '#0F172A' },
+  desc: { fontSize: 14, color: '#475569', textAlign: 'center' },
 });

@@ -14,7 +14,15 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export default function AppNavigator() {
   return (
-    <Stack.Navigator initialRouteName="Home" screenOptions={{ headerShown: true }}>
+    <Stack.Navigator
+      initialRouteName="Home"
+      screenOptions={{
+        headerShown: true,
+        headerStyle: { backgroundColor: '#F5F9FF' },
+        headerTitleStyle: { color: '#0F172A', fontWeight: '800' },
+        headerTintColor: '#2563EB',
+      }}
+    >
       <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'CureFact' }} />
       <Stack.Screen name="FactCheck" component={FactCheckFlow} options={{ title: 'Social Media Check' }} />
       <Stack.Screen name="LabelCheck" component={LabelCheckFlow} options={{ title: 'Product Label Check' }} />
